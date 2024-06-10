@@ -6,10 +6,10 @@
 
 class Cube
 {
-    GLuint vertexVBO = 0;
-    GLuint indexVBO = 0;
+    GLuint VBO;
 public:
     Cube(GLuint shaderProgram);
+    ~Cube();
     void draw(GLuint shaderProgram) const;
 };
 

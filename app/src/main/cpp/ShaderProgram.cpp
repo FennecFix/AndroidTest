@@ -46,6 +46,9 @@ ShaderProgram::ShaderProgram(const char* vertexShaderCode, const char* fragmentS
 		glGetProgramInfoLog(ID, 512, nullptr, log);
         LOGE("%s", log);
 	}
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
 }
 
 void ShaderProgram::use() const

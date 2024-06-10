@@ -1,10 +1,8 @@
-#include <jni.h>
 #include <android/log.h>
 #include <GLES2/gl2.h>
-#include <android_native_app_glue.h>
 #include <EGL/egl.h>
+#include <android_native_app_glue.h>
 #include <memory>
-#include <algorithm>
 
 #include <glm/geometric.hpp>
 #include <glm/ext/matrix_transform.hpp>
@@ -17,7 +15,6 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-struct android_app* application;
 EGLDisplay display;
 EGLSurface surface;
 EGLContext context;
@@ -29,6 +26,8 @@ glm::mat4 model = glm::mat4(1.0f);
 glm::mat4 view = glm::mat4(1.0f);
 glm::mat4 projection = glm::mat4(1.0f);
 
+glm::vec3 cameraPos(0, 2, -6);
+
 std::unique_ptr<Cube> cube;
 std::unique_ptr<ShaderProgram> shaderProgram;
 
@@ -36,7 +35,7 @@ std::unique_ptr<ShaderProgram> shaderProgram;
 #include <android/asset_manager_jni.h>
 #include <string>
 
-void init(ANativeWindow* window)
+void initEGL(ANativeWindow* window)
 {
     EGLint attribList[] =
     {
@@ -95,7 +94,7 @@ void init(ANativeWindow* window)
     }
 }
 
-void init_render(AAssetManager* assetManager)
+void initRender(AAssetManager* assetManager)
 {
     GLenum error = glGetError();
     if (error != GL_NO_ERROR)
@@ -135,6 +134,17 @@ void init_render(AAssetManager* assetManager)
     shaderProgram = std::make_unique<ShaderProgram>(readShader("vertexShader.hlsl").c_str(), readShader("fragmentShader.hlsl").c_str());
     shaderProgram->use();
 
+    projection = glm::perspective(glm::radians(45.0), (double)width / (double)height, 0.1, 100.0);
+    view = glm::lookAt(cameraPos, glm::vec3(0,0,0), glm::vec3(0, 1, 0));
+
+    shaderProgram->setVec3("lightColor", 1.0f, 1.0f, 1.0f);
+    shaderProgram->setVec3("objectColor", 1.0f, 0.5f, 0.31f);
+    shaderProgram->setVec3("lightPos", cameraPos);
+    shaderProgram->setVec3("viewPos", cameraPos);
+
+    shaderProgram->setMatrix("view",view);
+    shaderProgram->setMatrix("projection", projection);
+
     cube = std::make_unique<Cube>(shaderProgram->ID);
 }
 
@@ -144,14 +154,11 @@ void render()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
-    projection = glm::perspective(glm::radians(45.0), (double)width / (double)height, 0.1, 100.0);
-    view = glm::lookAt(glm::vec3(0, 2, -6), glm::vec3(0,0,0), glm::vec3(0, 1, 0));
-
     shaderProgram->use();
 
+
+
     shaderProgram->setMatrix("model", model);
-    shaderProgram->setMatrix("view",view);
-    shaderProgram->setMatrix("projection", projection);
 
     cube->draw(shaderProgram->ID);
 
@@ -162,20 +169,9 @@ void render()
     }
 }
 
-void handle_cmd(android_app *app, int32_t cmd)
-{
-    switch (cmd)
-    {
-        case APP_CMD_INIT_WINDOW:
-            init(app->window);
-            init_render(application->activity->assetManager);
-            break;
-    }
-}
-
 glm::vec2 prevPos;
 
-int32_t handle_input(struct android_app* app, AInputEvent* event)
+int32_t handleInput(struct android_app* app, AInputEvent* event)
 {
     int32_t eventType = AInputEvent_getType(event);
     switch(eventType){
@@ -188,8 +184,6 @@ int32_t handle_input(struct android_app* app, AInputEvent* event)
                     {
                         case AMOTION_EVENT_ACTION_DOWN:
                             prevPos = {AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0)};
-                            break;
-                        case AMOTION_EVENT_ACTION_UP:
                             break;
                         case AMOTION_EVENT_ACTION_MOVE:
                             glm::vec2 currPos = {AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0)};
@@ -212,13 +206,35 @@ int32_t handle_input(struct android_app* app, AInputEvent* event)
     return 0;
 }
 
-void android_main(struct android_app* state)
-{
-    application = state;
-    application->onAppCmd = handle_cmd;
-    application->onInputEvent = handle_input;
+bool isInitializing = true;
 
+void android_main(struct android_app* application)
+{
     LOGI("%s", glGetString(GL_VERSION));
+
+    application->onInputEvent = handleInput;
+    application->onAppCmd = [](android_app *app, int32_t cmd)
+    {
+        if (cmd == APP_CMD_INIT_WINDOW)
+            isInitializing = false;
+    };
+
+    while (isInitializing)
+    {
+        int events;
+        struct android_poll_source* source;
+
+        while ((ALooper_pollAll(0, NULL, &events, (void **) &source)) >= 0)
+        {
+            if (source != NULL)
+            {
+                source->process(application, source);
+            }
+        }
+    }
+
+    initEGL(application->window);
+    initRender(application->activity->assetManager);
 
     bool isRunning = true;
     while (isRunning)
@@ -226,19 +242,16 @@ void android_main(struct android_app* state)
         int events;
         struct android_poll_source* source;
 
-        if(application->window)
-        {
-            render();
-        }
+        render();
 
         while ((ALooper_pollAll(0, NULL, &events, (void **) &source)) >= 0)
         {
             if (source != NULL)
             {
-                source->process(state, source);
+                source->process(application, source);
             }
 
-            if (state->destroyRequested != 0)
+            if (application->destroyRequested != 0)
             {
                 LOGI("android_main: destroy requested");
                 eglDestroySurface(display, surface);
