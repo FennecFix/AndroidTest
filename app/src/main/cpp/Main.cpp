@@ -121,11 +121,10 @@ void initRender(AAssetManager* assetManager)
     {
         AAsset* asset = AAssetManager_open(assetManager, path, AASSET_MODE_BUFFER);
         off_t length = AAsset_getLength(asset);
-        char* buffer = new char[length + 1];
-        AAsset_read(asset, buffer, length);
+        std::unique_ptr<char[]> buffer(new char[length + 1]);
+        AAsset_read(asset, buffer.get(), length);
         buffer[length] = '\0';
-        std::string shaderSource(buffer);
-        delete[] buffer;
+        std::string shaderSource(buffer.get());
         AAsset_close(asset);
 
         return shaderSource;
